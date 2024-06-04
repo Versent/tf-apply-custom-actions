@@ -1,0 +1,75 @@
+name: Terraform Apply Custom Action
+
+description: Deploys Terraform templates
+
+inputs:
+  tfDir:
+    description: The directory where the Terraform templates are
+    required: false
+    default: ""
+  tfArgs:
+    description: Extra arguments to pass to terraform
+    required: false
+    default: ""
+  tfWorkspace:
+    description: The Terraform workspace to select
+    required: false
+    default: "default"
+  gitUser:
+    description: The Git user used to clone repositories
+    required: true
+  gitToken:
+    description: The Git user token used to clone repositories
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Git
+      shell: bash
+      env:
+        GIT_USER: ${{ inputs.gitUser }}
+        GIT_TOKEN: ${{ inputs.gitToken }}
+
+      run: |
+        git config --global credential.helper store
+        echo "https://$GIT_USER:$GIT_TOKEN@github.com" >> ~/.git-credentials
+
+    - name: Check workflow is running on latest commit
+      shell: bash
+      run: |
+        # get the latest commit for this branch from the API
+        latest_commit=$(
+          curl -s \
+          -H "Authorization: Bearer ${{ github.token }}" \
+          https://api.github.com/repos/${{ github.repository }}/commits/${{ github.ref }} | jq -r .sha
+        )
+
+        # die if the commit this workflow is run against isn't the latest
+        if [[ "$latest_commit" != "${{ github.sha }}" ]]; then
+          echo """
+          Workflow was not run on the latest commit for this branch!
+          The latest commit on ${{ github.ref }} is ${latest_commit:0:8}
+          Terraform Applys can only be run on the latest commit or destructive actions may occur.
+          If you intend to rollback a change, undo the commit instead with a new commit and deploy via a new PR
+          """
+          exit 1;
+        fi
+
+    - name: Terraform Init
+      shell: bash
+      working-directory: ${{ inputs.tfDir }}
+      run: terraform init -input=false
+
+    - name: Terraform Workspace
+      shell: bash
+      working-directory: ${{ inputs.tfDir }}
+      run: terraform workspace select ${{ inputs.tfWorkspace }}
+    
+    - name: Terraform Apply
+      shell: bash
+      working-directory: ${{ inputs.tfDir }}
+      run: terraform apply -input=false -auto-approve ${{ inputs.tfArgs }}
+
+branding:
+  icon: 'award'
+  color: 'green'
